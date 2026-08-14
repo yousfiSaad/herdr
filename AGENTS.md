@@ -77,6 +77,25 @@ Examples:
 - Sidebar layout, token placement, colors, selection, modals, mouse/viewport state: TUI/client.
 - Workspace/tab/pane remain shared session organization for now, but avoid making them mandatory identity for unrelated runtime features.
 
+### Architecture map
+
+One Rust binary with two roles: the background server owns the PTYs, terminal
+state, and sessions; the TUI is a client that attaches over the socket, detaches,
+and reattaches. Data flow: PTY bytes → terminal emulation (`src/terminal/` over
+the vendored libghostty-vt bindings in `src/ghostty/`) → agent-state detection
+(`src/detect/`) → JSON API and events (`src/api/`) → wire protocol
+(`src/protocol/wire.rs`) → TUI client (`src/client/`, `src/app/`, `src/ui/`).
+
+- `src/server/` — client accept/transport, terminal attach, render streaming, notifications, handoff, headless mode.
+- `src/api/` — socket API: request/response schema (`schema.rs`, published as `docs/next/api/herdr-api.schema.json`), event hub, subscriptions.
+- `src/app/` — TUI application core: `state.rs` (`AppState`, pure data), `actions.rs` (mutations), `input/` (key/mouse → actions), plus runtime/session/popup helpers.
+- `src/workspace.rs` + `src/workspace/`, `src/pane.rs` — workspace → tab → pane organization; `PaneState` (data) vs `PaneRuntime`.
+- `src/detect/` — agent state (idle/working/blocked/unknown) from bottom-of-buffer pattern matching; per-agent TOML manifests, hot-reloadable.
+- `src/integration/` — bundled agent integration assets injected into panes, with versioned migration (`HERDR_INTEGRATION_VERSION`).
+- `src/persist/` — session save/restore (`~/.config/herdr/session.json`).
+- `src/platform/` — OS-specific implementation behind shared contracts in `src/platform/mod.rs`.
+- `src/cli.rs` + `src/cli/` — the `herdr` CLI that agents and scripts drive; documented in `skills/herdr/SKILL.md`.
+
 ## Maintainer Workflow
 
 This section applies only to verified maintainers as defined under Scope and
@@ -118,9 +137,17 @@ After Can confirms the change is integrated, update the shared checkout, remove 
 Use `just` recipes by default instead of invoking cargo or scripts directly.
 
 ```bash
+just build              # release binary
+just lint               # cargo fmt --check + clippy
 just test               # cargo nextest + maintenance script tests
-just check              # formatting check + cargo nextest + maintenance script tests
+just test-one <filter>  # single nextest filter, e.g. just test-one codex_stale_working
+just ci                 # lint + nextest + architecture/maintenance tests (PR checks)
+just check              # ci + Windows target clippy + script tests; run before committing
+just windows-lint       # x86_64-pc-windows-msvc clippy from Unix, catches cfg(windows) breaks
 ```
+
+Maintenance tests need `python3`; integration asset and plugin marketplace tests
+also need `bun`. `just install-hooks` installs the repo-local git hooks.
 
 Run `just check` before committing unless Can explicitly accepts narrower validation. Do not bypass failing checks; fix the failure or explain exactly why a narrower check is enough.
 

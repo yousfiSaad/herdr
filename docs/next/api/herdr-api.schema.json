@@ -2403,6 +2403,22 @@
           ],
           "type": "object"
         },
+        "PaneCloseParams": {
+          "properties": {
+            "confirm": {
+              "default": false,
+              "description": "Skip the confirmation prompt for panes that would otherwise require one.",
+              "type": "boolean"
+            },
+            "pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pane_id"
+          ],
+          "type": "object"
+        },
         "PaneCurrentParams": {
           "properties": {
             "caller_pane_id": {
@@ -5628,7 +5644,7 @@
               "type": "string"
             },
             "params": {
-              "$ref": "#/schemas/request/$defs/PaneTarget"
+              "$ref": "#/schemas/request/$defs/PaneCloseParams"
             }
           },
           "required": [

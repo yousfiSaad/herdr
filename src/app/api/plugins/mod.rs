@@ -490,8 +490,9 @@ impl App {
         let pane_id = params.pane_id;
         if let Err(response) = self.close_pane(
             id.clone(),
-            &crate::api::schema::PaneTarget {
+            &crate::api::schema::PaneCloseParams {
                 pane_id: pane_id.clone(),
+                confirm: false,
             },
         ) {
             return response;

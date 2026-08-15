@@ -559,6 +559,7 @@ impl App {
             previous_pane_focus: None,
             selected,
             mode,
+            pending_close: None,
             should_quit: false,
             detach_exits: no_session,
             detach_requested: false,
@@ -662,6 +663,7 @@ impl App {
             redraw_on_focus_gained: config.ui.redraw_on_focus_gained,
             mouse_scroll_lines: config.ui.mouse_scroll_lines(),
             confirm_close: config.ui.confirm_close,
+            confirm_close_pane: config.ui.confirm_close_pane,
             prompt_new_tab_name: config.ui.prompt_new_tab_name,
             prompt_new_workspace_name: config.ui.prompt_new_workspace_name,
             pane_borders: config.ui.pane_borders,
@@ -1508,6 +1510,7 @@ impl App {
                 self.state.right_click_passthrough_modifiers =
                     config.ui.right_click_passthrough_modifiers();
                 self.state.confirm_close = config.ui.confirm_close;
+                self.state.confirm_close_pane = config.ui.confirm_close_pane;
                 self.state.prompt_new_tab_name = config.ui.prompt_new_tab_name;
                 self.state.prompt_new_workspace_name = config.ui.prompt_new_workspace_name;
                 self.state.pane_borders = config.ui.pane_borders;
@@ -4905,8 +4908,9 @@ mod tests {
 
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req_pane_close".into(),
-            method: crate::api::schema::Method::PaneClose(crate::api::schema::PaneTarget {
+            method: crate::api::schema::Method::PaneClose(crate::api::schema::PaneCloseParams {
                 pane_id: target_pane_id,
+                confirm: false,
             }),
         });
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();
@@ -4931,8 +4935,9 @@ mod tests {
 
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req_pane_close_last".into(),
-            method: crate::api::schema::Method::PaneClose(crate::api::schema::PaneTarget {
+            method: crate::api::schema::Method::PaneClose(crate::api::schema::PaneCloseParams {
                 pane_id: target_pane_id,
+                confirm: false,
             }),
         });
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();
@@ -4970,8 +4975,9 @@ mod tests {
 
         let response = app.handle_api_request(crate::api::schema::Request {
             id: "req_pane_close_parent_group".into(),
-            method: crate::api::schema::Method::PaneClose(crate::api::schema::PaneTarget {
+            method: crate::api::schema::Method::PaneClose(crate::api::schema::PaneCloseParams {
                 pane_id: target_pane_id,
+                confirm: false,
             }),
         });
         let response: serde_json::Value = serde_json::from_str(&response).unwrap();
@@ -4980,6 +4986,87 @@ mod tests {
         assert_eq!(app.state.mode, Mode::ConfirmClose);
         assert_eq!(app.state.selected, 0);
         assert_eq!(app.state.workspaces.len(), 2);
+    }
+
+    #[test]
+    fn pane_close_request_requires_confirmation_for_busy_pane() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("api-pane-close-busy");
+        let second_pane = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+
+        let terminal_id = app.state.workspaces[0].tabs[0].panes[&second_pane]
+            .attached_terminal_id
+            .clone();
+        app.state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("test terminal for split pane")
+            .state = crate::detect::AgentState::Working;
+
+        let target_pane_id = app.pane_info(0, second_pane).unwrap().pane_id;
+
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req_pane_close_busy".into(),
+            method: crate::api::schema::Method::PaneClose(crate::api::schema::PaneCloseParams {
+                pane_id: target_pane_id.clone(),
+                confirm: false,
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(response["error"]["code"], "confirmation_required");
+        assert_eq!(app.state.mode, Mode::ConfirmClose);
+        assert_eq!(
+            app.state.pending_close,
+            Some(crate::app::state::PendingClose::Pane {
+                ws_idx: 0,
+                pane_id: second_pane
+            })
+        );
+        assert_eq!(app.state.workspaces[0].layout.pane_count(), 2);
+
+        let confirmed = app.handle_api_request(crate::api::schema::Request {
+            id: "req_pane_close_busy_confirm".into(),
+            method: crate::api::schema::Method::PaneClose(crate::api::schema::PaneCloseParams {
+                pane_id: target_pane_id,
+                confirm: true,
+            }),
+        });
+        let confirmed: serde_json::Value = serde_json::from_str(&confirmed).unwrap();
+
+        assert_eq!(confirmed["result"]["type"], "ok");
+        assert_eq!(app.state.workspaces[0].layout.pane_count(), 1);
+    }
+
+    #[test]
+    fn pane_close_request_closes_idle_pane_without_confirmation_under_busy_policy() {
+        let mut app = test_app();
+        let mut workspace = Workspace::test_new("api-pane-close-idle");
+        let second_pane = workspace.test_split(ratatui::layout::Direction::Horizontal);
+        app.state.workspaces = vec![workspace];
+        app.state.ensure_test_terminals();
+        app.state.active = Some(0);
+        app.state.selected = 0;
+        app.state.mode = Mode::Terminal;
+
+        let target_pane_id = app.pane_info(0, second_pane).unwrap().pane_id;
+
+        let response = app.handle_api_request(crate::api::schema::Request {
+            id: "req_pane_close_idle".into(),
+            method: crate::api::schema::Method::PaneClose(crate::api::schema::PaneCloseParams {
+                pane_id: target_pane_id,
+                confirm: false,
+            }),
+        });
+        let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+
+        assert_eq!(response["result"]["type"], "ok");
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert_eq!(app.state.workspaces[0].layout.pane_count(), 1);
     }
 
     #[test]

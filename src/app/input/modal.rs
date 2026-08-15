@@ -7,6 +7,7 @@ use crate::{
     app::{
         state::{
             AppState, ContextMenuKind, ContextMenuState, MenuListState, Mode, NavigatorStateFilter,
+            PendingClose,
         },
         App,
     },
@@ -751,6 +752,7 @@ pub(super) fn confirm_close_accept(state: &mut AppState) {
 
 pub(super) fn confirm_close_cancel(state: &mut AppState) {
     state.confirm_close_workspace_id = None;
+    state.pending_close = None;
     state.mode = Mode::Navigate;
 }
 
@@ -1117,9 +1119,14 @@ impl App {
     }
 
     pub(super) fn confirm_close_accept_via_api(&mut self) {
-        if let Some(ws_idx) = self.state.take_confirmed_workspace_close_index() {
+        if let Some(PendingClose::Pane { ws_idx, pane_id }) = self.state.pending_close {
+            if let Some(public_pane_id) = self.public_pane_id(ws_idx, pane_id) {
+                self.runtime_pane_close("tui.pane.close.confirm", public_pane_id, true);
+            }
+        } else if let Some(ws_idx) = self.state.take_confirmed_workspace_close_index() {
             self.close_workspace_idx_with_group_via_api(ws_idx);
         }
+        self.state.pending_close = None;
         self.state.mode = if self.state.active.is_some() {
             Mode::Terminal
         } else {

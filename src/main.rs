@@ -320,6 +320,11 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # Ask for confirmation before closing a workspace
 # confirm_close = true
 
+# When to ask for confirmation before closing a pane.
+# "busy" asks only when the pane's agent is working or blocked; "always" asks for
+# every pane close; "never" closes panes immediately.
+# confirm_close_pane = "busy"
+
 # Ask for a tab name before creating a new tab.
 # Set false to create tabs immediately with generated names.
 # prompt_new_tab_name = true

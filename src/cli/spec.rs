@@ -586,7 +586,7 @@ fn pane_command() -> Command {
                 .arg(flag("focus"))
                 .arg(flag("no-focus")),
         )
-        .subcommand(id_command("close", "pane_id", "Close a pane"))
+        .subcommand(id_command("close", "pane_id", "Close a pane").arg(flag("force")))
         .subcommand(
             Command::new("send-text")
                 .about("Send literal text to a pane")

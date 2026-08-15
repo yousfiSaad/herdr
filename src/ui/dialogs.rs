@@ -620,6 +620,27 @@ fn confirm_close_overlay_text(
     app: &AppState,
     terminal_runtimes: &TerminalRuntimeRegistry,
 ) -> (String, String) {
+    if let Some(crate::app::state::PendingClose::Pane { ws_idx, pane_id }) = &app.pending_close {
+        let terminal = app
+            .terminal_id_for_pane(*ws_idx, *pane_id)
+            .and_then(|terminal_id| app.terminals.get(&terminal_id));
+        let pane_name = terminal
+            .and_then(|terminal| {
+                terminal
+                    .effective_agent_label()
+                    .map(str::to_string)
+                    .or_else(|| terminal.terminal_title.clone())
+            })
+            .unwrap_or_else(|| "pane".to_string());
+        let state_label = terminal
+            .map(|terminal| crate::detect::manifest::agent_state_label(terminal.state))
+            .unwrap_or("unknown");
+        return (
+            "Close pane?".to_string(),
+            format!("{pane_name} — agent {state_label}, the process will be killed"),
+        );
+    }
+
     let ws_name = app
         .workspaces
         .get(app.selected)
@@ -820,6 +841,33 @@ mod tests {
 
         assert_eq!(title, "Close workspace?");
         assert_eq!(detail, "current — 1 pane");
+    }
+
+    #[test]
+    fn confirm_close_text_names_busy_pane_and_agent_state_for_pending_pane() {
+        let mut app = AppState::test_new();
+        let workspace = Workspace::test_new("initial");
+        let root_pane = workspace.tabs[0].root_pane;
+        let terminal_id = workspace.tabs[0].panes[&root_pane]
+            .attached_terminal_id
+            .clone();
+        app.workspaces = vec![workspace];
+        app.ensure_test_terminals();
+        let terminal = app.terminals.get_mut(&terminal_id).unwrap();
+        terminal.detected_agent = Some(crate::detect::Agent::Claude);
+        terminal.state = crate::detect::AgentState::Working;
+        app.pending_close = Some(crate::app::state::PendingClose::Pane {
+            ws_idx: 0,
+            pane_id: root_pane,
+        });
+        app.selected = 0;
+
+        let terminal_runtimes = crate::terminal::TerminalRuntimeRegistry::new();
+        let (title, detail) = confirm_close_overlay_text(&app, &terminal_runtimes);
+
+        assert_eq!(title, "Close pane?");
+        assert!(detail.contains("working"), "detail was: {detail}");
+        assert!(detail.contains("killed"), "detail was: {detail}");
     }
 
     #[cfg(unix)]

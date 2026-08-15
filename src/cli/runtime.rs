@@ -1,6 +1,6 @@
 use crate::api::schema::{
-    EmptyParams, Method, PaneFocusDirectionParams, PaneInputSetParams, PaneMoveParams,
-    PaneRenameParams, PaneResizeParams, PaneSplitParams, PaneSwapParams, PaneTarget,
+    EmptyParams, Method, PaneCloseParams, PaneFocusDirectionParams, PaneInputSetParams,
+    PaneMoveParams, PaneRenameParams, PaneResizeParams, PaneSplitParams, PaneSwapParams,
     PaneZoomParams, Request, TabCreateParams, TabListParams, TabRenameParams, TabTarget,
     WorkspaceCloseParams, WorkspaceCreateParams, WorkspaceRenameParams, WorkspaceTarget,
     WorktreeCreateParams, WorktreeListParams, WorktreeOpenParams, WorktreeRemoveParams,
@@ -118,6 +118,9 @@ pub(super) fn pane_move(params: PaneMoveParams) -> std::io::Result<i32> {
     print_method_response("cli:pane:move", Method::PaneMove(params))
 }
 
-pub(super) fn pane_close(pane_id: String) -> std::io::Result<i32> {
-    print_method_response("cli:pane:close", Method::PaneClose(PaneTarget { pane_id }))
+pub(super) fn pane_close(pane_id: String, confirm: bool) -> std::io::Result<i32> {
+    print_method_response(
+        "cli:pane:close",
+        Method::PaneClose(PaneCloseParams { pane_id, confirm }),
+    )
 }

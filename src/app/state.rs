@@ -940,6 +940,13 @@ impl Mode {
     }
 }
 
+/// Pane awaiting confirmation while `mode == Mode::ConfirmClose`. Workspace
+/// closes are tracked by `AppState::confirm_close_workspace_id` instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PendingClose {
+    Pane { ws_idx: usize, pane_id: PaneId },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum NavigatorTarget {
     Workspace {
@@ -1447,6 +1454,8 @@ pub struct AppState {
     pub mode: Mode,
     /// Stable workspace identity captured when the close confirmation opens.
     pub(crate) confirm_close_workspace_id: Option<String>,
+    /// Pane awaiting confirmation while `mode == Mode::ConfirmClose`.
+    pub(crate) pending_close: Option<PendingClose>,
     pub should_quit: bool,
     /// In monolithic --no-session mode, detach exits the app because there is no server to detach from.
     pub detach_exits: bool,
@@ -1544,6 +1553,7 @@ pub struct AppState {
     pub redraw_on_focus_gained: bool,
     pub mouse_scroll_lines: usize,
     pub confirm_close: bool,
+    pub confirm_close_pane: crate::config::ConfirmClosePaneConfig,
     pub prompt_new_tab_name: bool,
     pub prompt_new_workspace_name: bool,
     pub pane_borders: bool,
@@ -1839,6 +1849,7 @@ impl AppState {
             selected: 0,
             mode: Mode::Navigate,
             confirm_close_workspace_id: None,
+            pending_close: None,
             should_quit: false,
             detach_exits: false,
             detach_requested: false,
@@ -1936,6 +1947,7 @@ impl AppState {
             redraw_on_focus_gained: true,
             mouse_scroll_lines: crate::config::DEFAULT_MOUSE_SCROLL_LINES,
             confirm_close: true,
+            confirm_close_pane: crate::config::ConfirmClosePaneConfig::Busy,
             prompt_new_tab_name: true,
             prompt_new_workspace_name: false,
             pane_borders: true,
@@ -2033,6 +2045,10 @@ impl AppState {
     }
 
     pub fn assert_invariants_for_test(&self) {
+        assert!(
+            self.mode != Mode::ConfirmClose || self.pending_close.is_some(),
+            "confirm-close mode must carry a pending close target"
+        );
         if self.workspaces.is_empty() {
             assert!(
                 self.active.is_none(),
@@ -2104,6 +2120,10 @@ impl AppState {
             assert!(
                 self.context_menu.is_none(),
                 "empty app state must not keep context menu"
+            );
+            assert!(
+                self.pending_close.is_none(),
+                "empty app state must not keep a pending close target"
             );
             assert!(
                 self.host_mouse_pixels.is_none(),

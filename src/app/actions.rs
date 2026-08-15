@@ -18,8 +18,8 @@ use super::api_helpers::pane_agent_status;
 use super::state::{
     navigator_display_index_of_row, navigator_display_lines, navigator_first_row_at_or_after,
     text_matches_query, AgentNotificationDelivery, AppState, Mode, NavigatorRow,
-    NavigatorStateFilter, NavigatorTarget, PaneFocusTarget, PendingAgentNotification, ToastKind,
-    ToastNotification, ToastTarget, ViewLayout,
+    NavigatorStateFilter, NavigatorTarget, PaneFocusTarget, PendingAgentNotification, PendingClose,
+    ToastKind, ToastNotification, ToastTarget, ViewLayout,
 };
 
 fn is_background_completion_transition(prev_state: AgentState, new_state: AgentState) -> bool {
@@ -2016,6 +2016,33 @@ impl AppState {
         self.confirm_close
             && self.workspace_close_would_close_worktree_group(ws_idx)
             && self.begin_workspace_close_confirmation(ws_idx)
+    }
+
+    /// Whether the pane-close confirmation policy requires a prompt for this pane.
+    pub(crate) fn pane_close_needs_confirmation(&self, ws_idx: usize, pane_id: PaneId) -> bool {
+        match self.confirm_close_pane {
+            crate::config::ConfirmClosePaneConfig::Never => false,
+            crate::config::ConfirmClosePaneConfig::Always => true,
+            crate::config::ConfirmClosePaneConfig::Busy => {
+                let Some(terminal_id) = self.terminal_id_for_pane(ws_idx, pane_id) else {
+                    return false;
+                };
+                self.terminals.get(&terminal_id).is_some_and(|terminal| {
+                    matches!(terminal.state, AgentState::Working | AgentState::Blocked)
+                })
+            }
+        }
+    }
+
+    /// Open the pane-close confirmation prompt for this pane. Returns true when
+    /// the close is deferred to confirmation.
+    pub(crate) fn confirm_pane_close(&mut self, ws_idx: usize, pane_id: PaneId) -> bool {
+        if !self.pane_close_needs_confirmation(ws_idx, pane_id) {
+            return false;
+        }
+        self.mode = Mode::ConfirmClose;
+        self.pending_close = Some(PendingClose::Pane { ws_idx, pane_id });
+        true
     }
 
     #[cfg(test)]
@@ -6091,6 +6118,48 @@ mod tests {
         assert_eq!(state.mode, Mode::ConfirmClose);
         assert_eq!(state.selected, 0);
         assert_eq!(state.workspaces.len(), 2);
+    }
+
+    #[test]
+    fn pane_close_needs_confirmation_follows_policy_and_agent_state() {
+        let mut state = app_with_workspaces(&["main"]);
+        let pane_id = state.workspaces[0].tabs[0].root_pane;
+        let terminal_id = state.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        let set_state = |state: &mut AppState, agent_state: AgentState| {
+            state
+                .terminals
+                .get_mut(&terminal_id)
+                .expect("test terminal")
+                .state = agent_state;
+        };
+
+        set_state(&mut state, AgentState::Working);
+        assert!(state.pane_close_needs_confirmation(0, pane_id));
+        set_state(&mut state, AgentState::Blocked);
+        assert!(state.pane_close_needs_confirmation(0, pane_id));
+        set_state(&mut state, AgentState::Idle);
+        assert!(!state.pane_close_needs_confirmation(0, pane_id));
+        set_state(&mut state, AgentState::Unknown);
+        assert!(!state.pane_close_needs_confirmation(0, pane_id));
+
+        state.confirm_close_pane = crate::config::ConfirmClosePaneConfig::Always;
+        set_state(&mut state, AgentState::Idle);
+        assert!(state.pane_close_needs_confirmation(0, pane_id));
+
+        state.confirm_close_pane = crate::config::ConfirmClosePaneConfig::Never;
+        set_state(&mut state, AgentState::Working);
+        assert!(!state.pane_close_needs_confirmation(0, pane_id));
+
+        state.confirm_close_pane = crate::config::ConfirmClosePaneConfig::Busy;
+        set_state(&mut state, AgentState::Working);
+        assert!(state.confirm_pane_close(0, pane_id));
+        assert_eq!(state.mode, Mode::ConfirmClose);
+        assert_eq!(
+            state.pending_close,
+            Some(PendingClose::Pane { ws_idx: 0, pane_id })
+        );
     }
 
     #[test]

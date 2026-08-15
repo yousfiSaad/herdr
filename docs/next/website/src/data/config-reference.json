@@ -935,6 +935,17 @@
           "description": "Ask for confirmation before closing a workspace."
         },
         {
+          "key": "ui.confirm_close_pane",
+          "type": "enum",
+          "default": "busy",
+          "description": "When to ask for confirmation before closing a pane. busy asks only when the pane's agent is working or blocked; always asks for every pane close; never closes panes immediately. Interactive closes only — `herdr pane close` stays non-interactive and returns a confirmation_required error unless --force is passed.",
+          "values": [
+            "always",
+            "busy",
+            "never"
+          ]
+        },
+        {
           "key": "ui.prompt_new_tab_name",
           "type": "boolean",
           "default": "true",

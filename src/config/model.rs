@@ -151,6 +151,15 @@ pub enum SidebarCollapsedModeConfig {
     Hidden,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConfirmClosePaneConfig {
+    Always,
+    #[default]
+    Busy,
+    Never,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct RightClickPassthroughModifierConfig(Option<KeyModifiers>);
 
@@ -873,6 +882,8 @@ pub struct UiConfig {
     pub mouse_scroll_lines: Option<NonZeroUsize>,
     /// Ask for confirmation before closing a workspace. Default: true.
     pub confirm_close: bool,
+    /// When to ask for confirmation before closing a pane. Default: busy.
+    pub confirm_close_pane: ConfirmClosePaneConfig,
     /// Ask for a tab name before creating a new tab. Default: true.
     pub prompt_new_tab_name: bool,
     /// Ask for a workspace name before interactive creation. Default: false.
@@ -1114,6 +1125,7 @@ impl Default for UiConfig {
             redraw_on_focus_gained: true,
             mouse_scroll_lines: None,
             confirm_close: true,
+            confirm_close_pane: ConfirmClosePaneConfig::Busy,
             prompt_new_tab_name: true,
             prompt_new_workspace_name: false,
             pane_borders: true,
@@ -1596,6 +1608,25 @@ sidebar_collapsed_mode = "hidden"
             config.ui.sidebar_collapsed_mode,
             SidebarCollapsedModeConfig::Hidden
         );
+    }
+
+    #[test]
+    fn confirm_close_pane_defaults_busy_and_parses_all_variants() {
+        let default_config = Config::default();
+        assert_eq!(
+            default_config.ui.confirm_close_pane,
+            ConfirmClosePaneConfig::Busy
+        );
+
+        for (value, expected) in [
+            ("always", ConfirmClosePaneConfig::Always),
+            ("busy", ConfirmClosePaneConfig::Busy),
+            ("never", ConfirmClosePaneConfig::Never),
+        ] {
+            let toml = format!("[ui]\nconfirm_close_pane = \"{value}\"\n");
+            let config: Config = toml::from_str(&toml).unwrap();
+            assert_eq!(config.ui.confirm_close_pane, expected);
+        }
     }
 
     #[test]

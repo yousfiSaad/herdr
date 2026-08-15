@@ -1010,16 +1010,34 @@ fn parse_pane_direction(value: &str) -> Result<PaneDirection, String> {
 }
 
 fn pane_close(args: &[String]) -> std::io::Result<i32> {
-    let Some(raw_pane_id) = args.first() else {
-        eprintln!("usage: herdr pane close <pane_id>");
-        return Ok(2);
-    };
-    if args.len() != 1 {
-        eprintln!("usage: herdr pane close <pane_id>");
-        return Ok(2);
+    let mut raw_pane_id = None;
+    let mut confirm = false;
+
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--force" => {
+                confirm = true;
+                index += 1;
+            }
+            "--json" => index += 1,
+            other => {
+                if raw_pane_id.is_some() {
+                    eprintln!("unknown option: {other}");
+                    return Ok(2);
+                }
+                raw_pane_id = Some(other);
+                index += 1;
+            }
+        }
     }
 
-    super::runtime::pane_close(super::normalize_pane_id(raw_pane_id))
+    let Some(raw_pane_id) = raw_pane_id else {
+        eprintln!("usage: herdr pane close <pane_id> [--force]");
+        return Ok(2);
+    };
+
+    super::runtime::pane_close(super::normalize_pane_id(raw_pane_id), confirm)
 }
 
 fn pane_send_text(args: &[String]) -> std::io::Result<i32> {

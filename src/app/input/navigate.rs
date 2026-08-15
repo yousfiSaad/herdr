@@ -617,7 +617,7 @@ impl App {
         let Some(pane_id) = self.public_pane_id(ws_idx, pane_id) else {
             return false;
         };
-        self.runtime_pane_close("tui.pane.close", pane_id);
+        self.runtime_pane_close("tui.pane.close", pane_id, false);
         self.state.mode == Mode::ConfirmClose
     }
 
@@ -3580,6 +3580,129 @@ navigate_pane_down = "ctrl+j"
         assert_eq!(app.state.selected, 0);
         assert_eq!(app.state.mode, Mode::ConfirmClose);
         assert_eq!(app.state.workspaces.len(), 2);
+    }
+
+    fn mark_pane_agent_state(
+        state: &mut AppState,
+        ws_idx: usize,
+        pane_id: crate::layout::PaneId,
+        agent_state: crate::detect::AgentState,
+    ) {
+        let terminal_id = state.workspaces[ws_idx].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        state
+            .terminals
+            .get_mut(&terminal_id)
+            .expect("test terminal for pane")
+            .state = agent_state;
+    }
+
+    #[test]
+    fn tui_close_busy_pane_opens_confirmation_and_accept_closes_pane() {
+        let mut app = app_with_test_workspaces(&["main", "second"]);
+        let second_pane = app.state.workspaces[1].test_split(Direction::Horizontal);
+        app.state.ensure_test_terminals();
+        app.state.active = Some(1);
+        app.state.selected = 1;
+        app.state.mode = Mode::Terminal;
+        app.state.workspaces[1].tabs[0]
+            .layout
+            .focus_pane(second_pane);
+        mark_pane_agent_state(
+            &mut app.state,
+            1,
+            second_pane,
+            crate::detect::AgentState::Working,
+        );
+
+        let deferred = app.close_focused_pane_via_api_requires_confirmation();
+
+        assert!(deferred);
+        assert_eq!(app.state.mode, Mode::ConfirmClose);
+        assert_eq!(
+            app.state.pending_close,
+            Some(crate::app::state::PendingClose::Pane {
+                ws_idx: 1,
+                pane_id: second_pane
+            })
+        );
+        assert_eq!(app.state.workspaces[1].tabs[0].layout.pane_count(), 2);
+
+        app.confirm_close_accept_via_api();
+
+        assert_eq!(app.state.pending_close, None);
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert_eq!(app.state.workspaces[1].tabs[0].layout.pane_count(), 1);
+    }
+
+    #[test]
+    fn tui_close_idle_pane_closes_immediately_under_busy_policy() {
+        let mut app = app_with_test_workspaces(&["main", "second"]);
+        let second_pane = app.state.workspaces[1].test_split(Direction::Horizontal);
+        app.state.ensure_test_terminals();
+        app.state.active = Some(1);
+        app.state.selected = 1;
+        app.state.mode = Mode::Terminal;
+        app.state.workspaces[1].tabs[0]
+            .layout
+            .focus_pane(second_pane);
+
+        let deferred = app.close_focused_pane_via_api_requires_confirmation();
+
+        assert!(!deferred);
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert_eq!(app.state.workspaces[1].tabs[0].layout.pane_count(), 1);
+    }
+
+    #[test]
+    fn tui_close_pane_always_policy_confirms_idle_pane() {
+        let mut app = app_with_test_workspaces(&["main", "second"]);
+        let second_pane = app.state.workspaces[1].test_split(Direction::Horizontal);
+        app.state.ensure_test_terminals();
+        app.state.confirm_close_pane = crate::config::ConfirmClosePaneConfig::Always;
+        app.state.active = Some(1);
+        app.state.selected = 1;
+        app.state.mode = Mode::Terminal;
+        app.state.workspaces[1].tabs[0]
+            .layout
+            .focus_pane(second_pane);
+
+        let deferred = app.close_focused_pane_via_api_requires_confirmation();
+
+        assert!(deferred);
+        assert_eq!(app.state.mode, Mode::ConfirmClose);
+        assert_eq!(app.state.workspaces[1].tabs[0].layout.pane_count(), 2);
+
+        app.confirm_close_accept_via_api();
+
+        assert_eq!(app.state.workspaces[1].tabs[0].layout.pane_count(), 1);
+    }
+
+    #[test]
+    fn tui_close_pane_never_policy_closes_busy_pane_immediately() {
+        let mut app = app_with_test_workspaces(&["main", "second"]);
+        let second_pane = app.state.workspaces[1].test_split(Direction::Horizontal);
+        app.state.ensure_test_terminals();
+        app.state.confirm_close_pane = crate::config::ConfirmClosePaneConfig::Never;
+        app.state.active = Some(1);
+        app.state.selected = 1;
+        app.state.mode = Mode::Terminal;
+        app.state.workspaces[1].tabs[0]
+            .layout
+            .focus_pane(second_pane);
+        mark_pane_agent_state(
+            &mut app.state,
+            1,
+            second_pane,
+            crate::detect::AgentState::Working,
+        );
+
+        let deferred = app.close_focused_pane_via_api_requires_confirmation();
+
+        assert!(!deferred);
+        assert_eq!(app.state.mode, Mode::Terminal);
+        assert_eq!(app.state.workspaces[1].tabs[0].layout.pane_count(), 1);
     }
 
     #[cfg(unix)]

@@ -450,11 +450,7 @@ pub(super) fn open_new_tab_dialog(state: &mut AppState) {
 }
 
 pub(super) fn leave_modal(state: &mut AppState) {
-    if state.active.is_some() {
-        state.mode = Mode::Terminal;
-    } else {
-        state.mode = Mode::Navigate;
-    }
+    state.exit_modal();
 }
 
 pub(super) const ONBOARDING_WELCOME_ACTIONS: &[ModalActionSpec<ModalAction>] = &[ModalActionSpec {
@@ -734,6 +730,7 @@ pub(crate) fn handle_resize_key(state: &mut AppState, raw_key: TerminalKey) {
 }
 
 pub(super) fn open_confirm_close(state: &mut AppState) {
+    state.enter_modal(Mode::ConfirmClose);
     state.begin_workspace_close_confirmation(state.selected);
 }
 
@@ -748,12 +745,12 @@ pub(super) fn confirm_close_accept(state: &mut AppState) {
     } else {
         state.mode = Mode::Terminal;
     }
+    state.modal_return = None;
 }
 
 pub(super) fn confirm_close_cancel(state: &mut AppState) {
     state.confirm_close_workspace_id = None;
-    state.pending_close = None;
-    state.mode = Mode::Navigate;
+    state.cancel_confirm_close();
 }
 
 #[cfg(test)]
@@ -1127,11 +1124,8 @@ impl App {
             self.close_workspace_idx_with_group_via_api(ws_idx);
         }
         self.state.pending_close = None;
-        self.state.mode = if self.state.active.is_some() {
-            Mode::Terminal
-        } else {
-            Mode::Navigate
-        };
+        self.state.modal_return = None;
+        self.state.mode = self.state.base_mode();
     }
 
     pub(crate) fn handle_resize_key_via_api(&mut self, raw_key: TerminalKey) {
@@ -2149,6 +2143,7 @@ mod tests {
     #[test]
     fn confirm_close_keyboard_actions_are_direct_not_focused() {
         let mut state = state_with_workspaces(&["a", "b"]);
+        state.mode = Mode::Navigate;
         state.selected = 1;
         open_confirm_close(&mut state);
 
@@ -2165,6 +2160,50 @@ mod tests {
             KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()),
         );
         assert_eq!(state.workspaces.len(), 1);
+    }
+
+    #[test]
+    fn confirm_close_cancel_returns_to_the_mode_the_prompt_was_opened_from() {
+        // Pane close requested from terminal mode.
+        let mut state = state_with_workspaces(&["a"]);
+        state.mode = Mode::Terminal;
+        let pane_id = state.workspaces[0].focused_pane_id().expect("test pane");
+        state.enter_confirm_close(PendingClose::Pane { ws_idx: 0, pane_id });
+
+        handle_confirm_close_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()),
+        );
+
+        assert_eq!(state.mode, Mode::Terminal);
+        assert_eq!(state.pending_close, None);
+        assert_eq!(state.modal_return, None);
+
+        // Workspace close requested from the workspace list.
+        let mut state = state_with_workspaces(&["a"]);
+        state.mode = Mode::Navigate;
+        open_confirm_close(&mut state);
+
+        handle_confirm_close_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()),
+        );
+
+        assert_eq!(state.mode, Mode::Navigate);
+
+        // Workspace close requested from a context menu item; the menu is
+        // consumed before the prompt opens, so cancel falls back to terminal.
+        let mut state = state_with_workspaces(&["a"]);
+        state.mode = Mode::ContextMenu;
+        state.context_menu = None;
+        open_confirm_close(&mut state);
+
+        handle_confirm_close_key(
+            &mut state,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::empty()),
+        );
+
+        assert_eq!(state.mode, Mode::Terminal);
     }
 
     #[test]

@@ -17,7 +17,7 @@ use crate::workspace::WorkspaceGitStatus;
 use super::api_helpers::pane_agent_status;
 use super::state::{
     navigator_display_index_of_row, navigator_display_lines, navigator_first_row_at_or_after,
-    text_matches_query, AgentNotificationDelivery, AppState, Mode, NavigatorRow,
+    text_matches_query, AgentNotificationDelivery, AppState, ModalReturn, Mode, NavigatorRow,
     NavigatorStateFilter, NavigatorTarget, PaneFocusTarget, PendingAgentNotification, PendingClose,
     ToastKind, ToastNotification, ToastTarget, ViewLayout,
 };
@@ -2013,9 +2013,63 @@ impl AppState {
     }
 
     pub(crate) fn confirm_implicit_worktree_group_close(&mut self, ws_idx: usize) -> bool {
-        self.confirm_close
-            && self.workspace_close_would_close_worktree_group(ws_idx)
-            && self.begin_workspace_close_confirmation(ws_idx)
+        if self.confirm_close && self.workspace_close_would_close_worktree_group(ws_idx) {
+            self.enter_modal(Mode::ConfirmClose);
+            self.begin_workspace_close_confirmation(ws_idx)
+        } else {
+            false
+        }
+    }
+
+    /// The workspace-context mode used when a modal has no recorded return:
+    /// the terminal when a workspace is active, otherwise the workspace list.
+    pub(crate) fn base_mode(&self) -> Mode {
+        if self.active.is_some() {
+            Mode::Terminal
+        } else {
+            Mode::Navigate
+        }
+    }
+
+    /// Open `modal`, recording where to return when it closes.
+    ///
+    /// Dialogs never nest: a modal opened while another is already active —
+    /// for example the confirm-close prompt opened from a context-menu
+    /// action, where the menu is consumed before the action runs — returns
+    /// to the base mode, because the previous modal no longer exists.
+    pub(crate) fn enter_modal(&mut self, modal: Mode) {
+        let to = if self.mode.is_base() {
+            self.mode
+        } else {
+            self.base_mode()
+        };
+        self.modal_return = Some(ModalReturn { modal, to });
+        self.mode = modal;
+    }
+
+    /// Close the current modal, restoring the mode it replaced when it
+    /// recorded one; otherwise fall back to the workspace-context mode.
+    pub(crate) fn exit_modal(&mut self) {
+        let to = match self.modal_return {
+            Some(ModalReturn { modal, to }) if modal == self.mode => to,
+            _ => self.base_mode(),
+        };
+        self.modal_return = None;
+        self.mode = to;
+    }
+
+    /// Enter the confirm-close prompt for `pending`, recording the mode to
+    /// restore when the prompt is cancelled.
+    pub(crate) fn enter_confirm_close(&mut self, pending: PendingClose) {
+        self.enter_modal(Mode::ConfirmClose);
+        self.pending_close = Some(pending);
+    }
+
+    /// Dismiss the confirm-close prompt without closing anything, returning to
+    /// the mode the prompt was opened from.
+    pub(crate) fn cancel_confirm_close(&mut self) {
+        self.pending_close = None;
+        self.exit_modal();
     }
 
     /// Whether the pane-close confirmation policy requires a prompt for this pane.
@@ -2040,8 +2094,7 @@ impl AppState {
         if !self.pane_close_needs_confirmation(ws_idx, pane_id) {
             return false;
         }
-        self.mode = Mode::ConfirmClose;
-        self.pending_close = Some(PendingClose::Pane { ws_idx, pane_id });
+        self.enter_confirm_close(PendingClose::Pane { ws_idx, pane_id });
         true
     }
 

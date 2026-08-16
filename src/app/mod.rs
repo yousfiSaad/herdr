@@ -560,6 +560,7 @@ impl App {
             selected,
             mode,
             pending_close: None,
+            modal_return: None,
             should_quit: false,
             detach_exits: no_session,
             detach_requested: false,

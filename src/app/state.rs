@@ -923,6 +923,13 @@ impl Mode {
     /// Known limitation: the search boxes in `Navigator` and `KeybindHelp` are also held on ASCII,
     /// since this `Mode`-level predicate can't see `search_focused` (non-ASCII filtering there
     /// would need a runtime check).
+    /// Whether this mode is a workspace context rather than a dialog over
+    /// one. `enter_modal` records the current mode as the return target only
+    /// when it is a base mode; dialogs never nest.
+    pub(crate) fn is_base(self) -> bool {
+        matches!(self, Mode::Terminal | Mode::Navigate)
+    }
+
     pub(crate) fn wants_ascii_input(self) -> bool {
         matches!(
             self,
@@ -945,6 +952,21 @@ impl Mode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PendingClose {
     Pane { ws_idx: usize, pane_id: PaneId },
+}
+
+/// Where a modal returns when it closes.
+///
+/// Recorded by `enter_modal` so closing a modal restores the mode it
+/// replaced instead of guessing from workspace state. The `modal` key keeps
+/// stale records inert: a record is honored only while its own modal is
+/// still active, so exit paths that bypass `exit_modal` degrade to the
+/// base-mode fallback rather than restoring a wrong mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ModalReturn {
+    /// The modal mode this record belongs to.
+    pub(crate) modal: Mode,
+    /// Mode to restore when that modal closes.
+    pub(crate) to: Mode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1456,6 +1478,8 @@ pub struct AppState {
     pub(crate) confirm_close_workspace_id: Option<String>,
     /// Pane awaiting confirmation while `mode == Mode::ConfirmClose`.
     pub(crate) pending_close: Option<PendingClose>,
+    /// Return target recorded by the most recent `enter_modal` call.
+    pub(crate) modal_return: Option<ModalReturn>,
     pub should_quit: bool,
     /// In monolithic --no-session mode, detach exits the app because there is no server to detach from.
     pub detach_exits: bool,
@@ -1850,6 +1874,7 @@ impl AppState {
             mode: Mode::Navigate,
             confirm_close_workspace_id: None,
             pending_close: None,
+            modal_return: None,
             should_quit: false,
             detach_exits: false,
             detach_requested: false,
@@ -2049,6 +2074,18 @@ impl AppState {
             self.mode != Mode::ConfirmClose || self.pending_close.is_some(),
             "confirm-close mode must carry a pending close target"
         );
+        if self.mode == Mode::ConfirmClose {
+            assert!(
+                matches!(
+                    self.modal_return,
+                    Some(ModalReturn {
+                        modal: Mode::ConfirmClose,
+                        ..
+                    })
+                ),
+                "confirm-close mode must record its modal return target"
+            );
+        }
         if self.workspaces.is_empty() {
             assert!(
                 self.active.is_none(),
@@ -2124,6 +2161,10 @@ impl AppState {
             assert!(
                 self.pending_close.is_none(),
                 "empty app state must not keep a pending close target"
+            );
+            assert!(
+                self.modal_return.is_none(),
+                "empty app state must not keep a modal return target"
             );
             assert!(
                 self.host_mouse_pixels.is_none(),

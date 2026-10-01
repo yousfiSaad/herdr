@@ -400,6 +400,10 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # resume_agents_on_restore = true
 # Milliseconds between automatic agent restores; 0 starts them without spacing.
 # startup_per_agent_delay_ms = 100
+# Replace the executable used when resuming an agent conversation. herdr appends
+# the agent's resume flags and session id after the configured prefix.
+# [session.agent_resume_command]
+# claude = ["ccs", "glm"]
 
 [remote]
 # Whether herdr manages the ssh config used for `herdr --remote`.

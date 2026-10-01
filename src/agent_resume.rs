@@ -197,11 +197,26 @@ pub fn session_ref_from_snapshot(
 }
 
 pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<AgentResumePlan> {
+    plan_with_command_override(source, agent, session_ref, None)
+}
+
+/// Builds the resume plan, optionally replacing the canonical executable.
+///
+/// `command_override` comes from `[session.agent_resume_command]` and replaces
+/// the first argv element, keeping the agent's resume flags and session
+/// reference, so `claude = ["ccs", "glm"]` resumes with
+/// `ccs glm --resume <id>`. Empty or blank overrides are ignored.
+pub fn plan_with_command_override(
+    source: &str,
+    agent: &str,
+    session_ref: &AgentSessionRef,
+    command_override: Option<&[String]>,
+) -> Option<AgentResumePlan> {
     if !is_official_agent_source(source, agent) {
         return None;
     }
 
-    let argv = match (source, agent, session_ref.kind) {
+    let mut argv = match (source, agent, session_ref.kind) {
         ("herdr:claude", "claude", AgentSessionRefKind::Id) => {
             vec![
                 "claude".into(),
@@ -310,6 +325,13 @@ pub fn plan(source: &str, agent: &str, session_ref: &AgentSessionRef) -> Option<
         }
         _ => return None,
     };
+    if let Some(override_args) = command_override.filter(|args| !args.is_empty()) {
+        // A blank entry would shell-quote to an empty argument; ignore such
+        // overrides and fall back to the canonical executable.
+        if override_args.iter().all(|arg| !arg.is_empty()) {
+            argv.splice(0..1, override_args.iter().cloned());
+        }
+    }
 
     Some(AgentResumePlan {
         agent: agent.to_string(),
@@ -448,6 +470,47 @@ mod tests {
             ]
         )
         .is_none());
+    }
+
+    #[test]
+    fn planner_applies_command_override_to_canonical_executable() {
+        let command_override = argv(&["ccs", "glm"]);
+        assert_eq!(
+            plan_with_command_override(
+                "herdr:claude",
+                "claude",
+                &AgentSessionRef::id("claude-session").unwrap(),
+                Some(&command_override)
+            )
+            .unwrap()
+            .argv,
+            vec!["ccs", "glm", "--resume", "claude-session"]
+        );
+        // Without an override the canonical executable is kept.
+        assert_eq!(
+            plan(
+                "herdr:claude",
+                "claude",
+                &AgentSessionRef::id("claude-session").unwrap()
+            )
+            .unwrap()
+            .argv,
+            vec!["claude", "--resume", "claude-session"]
+        );
+        // Empty or blank overrides are ignored.
+        for ignored in [Vec::new(), argv(&[""])] {
+            assert_eq!(
+                plan_with_command_override(
+                    "herdr:claude",
+                    "claude",
+                    &AgentSessionRef::id("claude-session").unwrap(),
+                    Some(&ignored)
+                )
+                .unwrap()
+                .argv,
+                vec!["claude", "--resume", "claude-session"]
+            );
+        }
     }
 
     #[test]

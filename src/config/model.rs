@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, num::NonZeroUsize};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    num::NonZeroUsize,
+};
 
 use crossterm::event::KeyModifiers;
 use serde::{de, Deserialize, Deserializer, Serialize};
@@ -270,6 +273,10 @@ pub struct SessionConfig {
     pub resume_agents_on_restore: bool,
     /// Milliseconds between automatic agent restores. Zero disables spacing.
     pub startup_per_agent_delay_ms: u32,
+    /// Per-agent replacement for the canonical executable of the resume
+    /// command, keyed by agent name. For example, `claude = ["ccs", "glm"]`
+    /// resumes Claude sessions with `ccs glm --resume <id>`. Default: empty.
+    pub agent_resume_command: BTreeMap<String, Vec<String>>,
 }
 
 impl Default for SessionConfig {
@@ -277,6 +284,7 @@ impl Default for SessionConfig {
         Self {
             resume_agents_on_restore: true,
             startup_per_agent_delay_ms: 100,
+            agent_resume_command: BTreeMap::new(),
         }
     }
 }
@@ -1444,6 +1452,27 @@ startup_per_agent_delay_ms = 0
         let config: Config = toml::from_str(toml).unwrap();
         assert!(!config.session.resume_agents_on_restore);
         assert_eq!(config.session.startup_per_agent_delay_ms, 0);
+    }
+
+    #[test]
+    fn agent_resume_command_overrides_parse_and_default_empty() {
+        assert!(Config::default().session.agent_resume_command.is_empty());
+
+        let toml = r#"
+[session.agent_resume_command]
+claude = ["ccs", "glm"]
+codex = ["codex-fork"]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.session.agent_resume_command.get("claude"),
+            Some(&vec!["ccs".to_string(), "glm".to_string()])
+        );
+        assert_eq!(
+            config.session.agent_resume_command.get("codex"),
+            Some(&vec!["codex-fork".to_string()])
+        );
+        assert!(!config.session.agent_resume_command.contains_key("droid"));
     }
 
     #[test]

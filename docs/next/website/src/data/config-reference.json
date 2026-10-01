@@ -1441,6 +1441,12 @@
           "type": "integer",
           "default": "100",
           "description": "Milliseconds between automatic agent restores after a server restart. The first agent starts without this delay; 0 disables spacing. Does not delay manual launches or explicit terminal attaches. Restart the server to apply."
+        },
+        {
+          "key": "session.agent_resume_command",
+          "type": "table of string lists",
+          "default": "{}",
+          "description": "Per-agent replacement for the canonical executable of the resume command, keyed by agent name. The configured argv prefix replaces the executable and Herdr appends the agent's resume flags and session reference, so claude = [\"ccs\", \"glm\"] restores Claude sessions with ccs glm --resume <id>. Restart the server to apply."
         }
       ]
     },

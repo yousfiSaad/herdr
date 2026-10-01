@@ -25,6 +25,7 @@ use super::{
 
 struct AgentRestoreState<'a> {
     enabled: bool,
+    command_overrides: &'a std::collections::BTreeMap<String, Vec<String>>,
     resumed_sessions: &'a mut HashSet<String>,
 }
 
@@ -39,6 +40,7 @@ struct RestoreRuntimeContext<'a> {
     scrollback_limit_bytes: usize,
     shell_config: crate::pane::PaneShellConfig<'a>,
     resume_agents_on_restore: bool,
+    agent_resume_command: &'a std::collections::BTreeMap<String, Vec<String>>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
     render_dirty: Arc<RenderSignal>,
@@ -63,6 +65,7 @@ type RestoredTab = (
 type RestoreFailures<T> = (T, usize);
 
 /// Restore workspaces from a snapshot. Each pane gets a fresh shell in its saved cwd.
+#[allow(clippy::too_many_arguments)]
 pub fn restore(
     snapshot: &SessionSnapshot,
     history: Option<&SessionHistorySnapshot>,
@@ -72,6 +75,7 @@ pub fn restore(
     default_shell: &str,
     shell_mode: crate::config::ShellModeConfig,
     resume_agents_on_restore: bool,
+    agent_resume_command: &std::collections::BTreeMap<String, Vec<String>>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
     render_dirty: Arc<RenderSignal>,
@@ -85,6 +89,7 @@ pub fn restore(
         scrollback_limit_bytes,
         crate::pane::PaneShellConfig::new(default_shell, shell_mode),
         resume_agents_on_restore,
+        agent_resume_command,
         &mut imported_panes,
         events,
         render_notify,
@@ -98,6 +103,7 @@ pub fn restore_handoff(
     scrollback_limit_bytes: usize,
     default_shell: &str,
     shell_mode: crate::config::ShellModeConfig,
+    agent_resume_command: &std::collections::BTreeMap<String, Vec<String>>,
     imports: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
@@ -111,6 +117,7 @@ pub fn restore_handoff(
         scrollback_limit_bytes,
         crate::pane::PaneShellConfig::new(default_shell, shell_mode),
         true,
+        agent_resume_command,
         imports,
         events,
         render_notify,
@@ -186,6 +193,7 @@ fn collect_layout_snapshot_pane_ids(node: &LayoutSnapshot, ids: &mut Vec<u32>) {
 }
 
 #[cfg(unix)]
+#[allow(clippy::too_many_arguments)]
 fn restore_with_imports_strict(
     snapshot: &SessionSnapshot,
     history: Option<&SessionHistorySnapshot>,
@@ -194,6 +202,7 @@ fn restore_with_imports_strict(
     scrollback_limit_bytes: usize,
     shell_config: crate::pane::PaneShellConfig<'_>,
     resume_agents_on_restore: bool,
+    agent_resume_command: &std::collections::BTreeMap<String, Vec<String>>,
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
@@ -207,6 +216,7 @@ fn restore_with_imports_strict(
         scrollback_limit_bytes,
         shell_config,
         resume_agents_on_restore,
+        agent_resume_command,
         imported_panes,
         events,
         render_notify,
@@ -226,6 +236,7 @@ fn restore_with_imports_strict(
     Ok(restored)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn restore_with_imports(
     snapshot: &SessionSnapshot,
     history: Option<&SessionHistorySnapshot>,
@@ -234,6 +245,7 @@ fn restore_with_imports(
     scrollback_limit_bytes: usize,
     shell_config: crate::pane::PaneShellConfig<'_>,
     resume_agents_on_restore: bool,
+    agent_resume_command: &std::collections::BTreeMap<String, Vec<String>>,
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
@@ -247,6 +259,7 @@ fn restore_with_imports(
         scrollback_limit_bytes,
         shell_config,
         resume_agents_on_restore,
+        agent_resume_command,
         imported_panes,
         events,
         render_notify,
@@ -255,6 +268,7 @@ fn restore_with_imports(
     .0
 }
 
+#[allow(clippy::too_many_arguments)]
 fn restore_with_imports_and_failures(
     snapshot: &SessionSnapshot,
     history: Option<&SessionHistorySnapshot>,
@@ -263,6 +277,7 @@ fn restore_with_imports_and_failures(
     scrollback_limit_bytes: usize,
     shell_config: crate::pane::PaneShellConfig<'_>,
     resume_agents_on_restore: bool,
+    agent_resume_command: &std::collections::BTreeMap<String, Vec<String>>,
     imported_panes: &mut HashMap<u32, crate::handoff_runtime::ImportedHandoffRuntime>,
     events: mpsc::Sender<AppEvent>,
     render_notify: Arc<Notify>,
@@ -286,6 +301,7 @@ fn restore_with_imports_and_failures(
             scrollback_limit_bytes,
             shell_config,
             resume_agents_on_restore,
+            agent_resume_command,
             events: events.clone(),
             render_notify: render_notify.clone(),
             render_dirty: render_dirty.clone(),
@@ -545,6 +561,7 @@ fn restore_tab(
         let startup = {
             let mut agent_restore = AgentRestoreState {
                 enabled: runtime_context.resume_agents_on_restore,
+                command_overrides: runtime_context.agent_resume_command,
                 resumed_sessions: resumed_agent_sessions,
             };
             pane_restore_startup(
@@ -826,7 +843,9 @@ fn pane_restore_startup<'a>(
     } else if let Some(resume) = reported_resume {
         Some(reported_resume_from_snapshot(resume).plan(cwd))
     } else {
-        session.and_then(|session| restore_plan_for_snapshot(session, true))
+        session.and_then(|session| {
+            restore_plan_for_snapshot(session, true, agent_restore.command_overrides)
+        })
     };
     let has_native_agent_restore = restore_plan.is_some();
     // Reserve before spawning so later panes in the same restore pass cannot
@@ -881,12 +900,18 @@ fn reported_resume_from_snapshot(
 fn restore_plan_for_snapshot(
     session: &PaneAgentSessionSnapshot,
     resume_agents_on_restore: bool,
+    agent_resume_command: &std::collections::BTreeMap<String, Vec<String>>,
 ) -> Option<crate::agent_resume::AgentResumePlan> {
     if !resume_agents_on_restore {
         return None;
     }
     let persisted = persisted_agent_session_from_snapshot(session)?;
-    crate::agent_resume::plan(&session.source, &session.agent, &persisted.session_ref)
+    crate::agent_resume::plan_with_command_override(
+        &session.source,
+        &session.agent,
+        &persisted.session_ref,
+        agent_resume_command.get(&session.agent).map(Vec::as_slice),
+    )
 }
 
 fn persisted_agent_session_from_snapshot(
@@ -916,8 +941,12 @@ fn take_restore_plan_for_snapshot(
     resume_agents_on_restore: bool,
     resumed_agent_sessions: &mut HashSet<String>,
 ) -> Option<crate::agent_resume::AgentResumePlan> {
-    restore_plan_for_snapshot(session, resume_agents_on_restore)
-        .filter(|plan| resumed_agent_sessions.insert(plan.dedupe_key.clone()))
+    restore_plan_for_snapshot(
+        session,
+        resume_agents_on_restore,
+        &std::collections::BTreeMap::new(),
+    )
+    .filter(|plan| resumed_agent_sessions.insert(plan.dedupe_key.clone()))
 }
 
 pub(super) fn prune_restored_node(node: Node, surviving: &HashSet<PaneId>) -> Option<Node> {
@@ -1178,9 +1207,14 @@ mod tests {
             value: pi_session_path.clone(),
         };
 
-        assert!(restore_plan_for_snapshot(&session, false).is_none());
+        assert!(
+            restore_plan_for_snapshot(&session, false, &std::collections::BTreeMap::new())
+                .is_none()
+        );
         assert_eq!(
-            restore_plan_for_snapshot(&session, true).unwrap().argv,
+            restore_plan_for_snapshot(&session, true, &std::collections::BTreeMap::new())
+                .unwrap()
+                .argv,
             vec!["pi", "--session", pi_session_path.as_str()]
         );
 
@@ -1190,7 +1224,46 @@ mod tests {
             kind: crate::agent_resume::AgentSessionRefKind::Path,
             value: test_session_path("claude-session"),
         };
-        assert!(restore_plan_for_snapshot(&unsupported_path, true).is_none());
+        assert!(restore_plan_for_snapshot(
+            &unsupported_path,
+            true,
+            &std::collections::BTreeMap::new()
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn restore_plan_applies_configured_agent_resume_command() {
+        let session = super::super::snapshot::PaneAgentSessionSnapshot {
+            source: "herdr:claude".into(),
+            agent: "claude".into(),
+            kind: crate::agent_resume::AgentSessionRefKind::Id,
+            value: "claude-session".into(),
+        };
+
+        let mut agent_resume_command = std::collections::BTreeMap::new();
+        agent_resume_command.insert(
+            "claude".to_string(),
+            vec!["ccs".to_string(), "glm".to_string()],
+        );
+
+        assert_eq!(
+            restore_plan_for_snapshot(&session, true, &agent_resume_command)
+                .unwrap()
+                .argv,
+            vec!["ccs", "glm", "--resume", "claude-session"]
+        );
+        // Overrides for other agents do not apply.
+        let mut other_agent_only = std::collections::BTreeMap::new();
+        other_agent_only.insert("codex".to_string(), vec!["codex-fork".to_string()]);
+        assert_eq!(
+            restore_plan_for_snapshot(&session, true, &other_agent_only)
+                .unwrap()
+                .argv,
+            vec!["claude", "--resume", "claude-session"]
+        );
+        // The opt-out switch still wins over the override.
+        assert!(restore_plan_for_snapshot(&session, false, &agent_resume_command).is_none());
     }
 
     #[test]
@@ -1231,6 +1304,7 @@ mod tests {
         let mut resumed = HashSet::new();
         let mut agent_restore = AgentRestoreState {
             enabled: true,
+            command_overrides: &std::collections::BTreeMap::new(),
             resumed_sessions: &mut resumed,
         };
 
@@ -1262,6 +1336,7 @@ mod tests {
         let mut resumed = HashSet::new();
         let mut agent_restore = AgentRestoreState {
             enabled: true,
+            command_overrides: &std::collections::BTreeMap::new(),
             resumed_sessions: &mut resumed,
         };
 
@@ -1312,6 +1387,7 @@ mod tests {
         let mut resumed = HashSet::new();
         let mut agent_restore = AgentRestoreState {
             enabled: true,
+            command_overrides: &std::collections::BTreeMap::new(),
             resumed_sessions: &mut resumed,
         };
 
@@ -1347,6 +1423,7 @@ mod tests {
         let mut resumed = HashSet::new();
         let mut disabled = AgentRestoreState {
             enabled: false,
+            command_overrides: &std::collections::BTreeMap::new(),
             resumed_sessions: &mut resumed,
         };
         let startup = pane_restore_startup(
@@ -1375,6 +1452,7 @@ mod tests {
         let mut resumed = HashSet::new();
         let mut agent_restore = AgentRestoreState {
             enabled: false,
+            command_overrides: &std::collections::BTreeMap::new(),
             resumed_sessions: &mut resumed,
         };
 
@@ -1472,6 +1550,7 @@ mod tests {
                 },
                 crate::config::ShellModeConfig::NonLogin,
                 false,
+                &std::collections::BTreeMap::new(),
                 events,
                 Arc::new(Notify::new()),
                 Arc::new(RenderSignal::new()),
@@ -1579,6 +1658,7 @@ mod tests {
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
             false,
+            &std::collections::BTreeMap::new(),
             events,
             Arc::new(Notify::new()),
             Arc::new(RenderSignal::new()),
@@ -1674,6 +1754,7 @@ mod tests {
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
             false,
+            &std::collections::BTreeMap::new(),
             events,
             Arc::new(Notify::new()),
             Arc::new(RenderSignal::new()),
@@ -1783,6 +1864,7 @@ mod tests {
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
             false,
+            &std::collections::BTreeMap::new(),
             events,
             Arc::new(Notify::new()),
             Arc::new(RenderSignal::new()),
@@ -1895,6 +1977,7 @@ mod tests {
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
             true,
+            &std::collections::BTreeMap::new(),
             events,
             Arc::new(Notify::new()),
             Arc::new(RenderSignal::new()),
@@ -1922,6 +2005,7 @@ mod tests {
             0,
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
+            &std::collections::BTreeMap::new(),
             &mut imports,
             mpsc::channel(4).0,
             Arc::new(Notify::new()),
@@ -1957,6 +2041,7 @@ mod tests {
                 test_restore_shell(),
                 crate::config::ShellModeConfig::NonLogin,
                 false,
+                &std::collections::BTreeMap::new(),
                 events.clone(),
                 Arc::new(Notify::new()),
                 Arc::new(RenderSignal::new()),
@@ -2006,6 +2091,7 @@ mod tests {
                 4096,
                 test_restore_shell(),
                 crate::config::ShellModeConfig::NonLogin,
+                &std::collections::BTreeMap::new(),
                 &mut imports,
                 events,
                 Arc::new(Notify::new()),
@@ -2060,6 +2146,7 @@ mod tests {
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
             false,
+            &std::collections::BTreeMap::new(),
             events,
             render_notify,
             render_dirty,
@@ -2098,6 +2185,7 @@ mod tests {
             test_restore_shell(),
             crate::config::ShellModeConfig::NonLogin,
             false,
+            &std::collections::BTreeMap::new(),
             events,
             render_notify,
             render_dirty,
@@ -2146,6 +2234,7 @@ mod tests {
                 test_restore_shell(),
                 crate::config::ShellModeConfig::NonLogin,
                 false,
+                &std::collections::BTreeMap::new(),
                 events,
                 Arc::new(Notify::new()),
                 Arc::new(RenderSignal::new()),

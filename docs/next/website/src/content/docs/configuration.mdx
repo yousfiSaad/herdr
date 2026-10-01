@@ -560,6 +560,15 @@ startup_per_agent_delay_ms = 100
 
 Automatic restores start one agent at a time, 100 milliseconds apart by default, to reduce startup contention. The first eligible agent starts immediately. Set `startup_per_agent_delay_ms = 0` to disable spacing. Manual launches and explicit terminal attaches are unaffected. Restart the Herdr server to apply changes.
 
+To resume an agent through a wrapper command, replace its executable with `session.agent_resume_command`. Each key is an agent name and the value is the argv prefix Herdr types instead of the canonical executable; the agent's resume flags and session reference are appended after it:
+
+```toml
+[session.agent_resume_command]
+claude = ["ccs", "glm"]
+```
+
+With the example above, Claude sessions restore with `ccs glm --resume <session-id>` instead of `claude --resume <session-id>`. Custom integrations that report their own resume command are unaffected; Herdr restores those with the reported argv unchanged.
+
 Only panes with a valid native session reference from an official integration can resume; other panes restore as normal shells. See [Session state and restore](/docs/session-state/) for supported Agents and persistence behavior.
 
 ## IME cursor tracking

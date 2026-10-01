@@ -556,6 +556,15 @@ startup_per_agent_delay_ms = 100
 
 为减少启动时的资源争用，自动恢复默认每隔 100 毫秒启动一个智能体。第一个满足条件的智能体会立即启动。设置 `startup_per_agent_delay_ms = 0` 可禁用间隔。手动启动和显式连接终端不受影响。修改后需重启 Herdr 服务器。
 
+如需通过包装命令恢复智能体，可用 `session.agent_resume_command` 替换其可执行文件。每个键是智能体名称，值是 Herdr 用来替代原有可执行文件输入的 argv 前缀；智能体的恢复参数和会话引用会追加在其后：
+
+```toml
+[session.agent_resume_command]
+claude = ["ccs", "glm"]
+```
+
+在上面的示例中，Claude 会话将以 `ccs glm --resume <session-id>` 而不是 `claude --resume <session-id>` 恢复。自报恢复命令的自定义集成不受影响；Herdr 会按报告的 argv 原样恢复它们。
+
 只有通过官方集成获得有效原生会话引用的窗格才能恢复；其他窗格会作为普通 shell 恢复。有关受支持的智能体和持久化行为，请参阅[会话状态与恢复](/docs/session-state/)。
 
 ## IME 光标跟踪
